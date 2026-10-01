@@ -1,7 +1,16 @@
+﻿# Detection rules and response artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
 .DS_Store
 Thumbs.db
+Desktop.ini
 *.log
+*.dmp
+*.raw
+*.csv
+Artifacts_*/
+bin/
+*.exe
+*.zip

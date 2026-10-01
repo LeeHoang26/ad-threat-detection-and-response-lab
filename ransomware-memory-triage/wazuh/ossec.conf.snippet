@@ -1,0 +1,22 @@
+<!--
+  Wazuh Manager Configuration Snippet for Canary SOAR Automation
+  Location: /var/ossec/etc/ossec.conf
+-->
+
+<ossec_config>
+
+  <!-- Command definition referencing the Windows batch wrapper -->
+  <command>
+    <name>canary-memory-triage</name>
+    <executable>canary-triage.cmd</executable>
+    <timeout_allowed>no</timeout_allowed>
+  </command>
+
+  <!-- Active Response trigger bound strictly to Canary Tampering Rule 100200 -->
+  <active-response>
+    <command>canary-memory-triage</command>
+    <location>all</location>
+    <rules_id>100200</rules_id>
+  </active-response>
+
+</ossec_config>

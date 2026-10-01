@@ -1,0 +1,14 @@
+# Binaries and tools
+bin/
+*.exe
+*.zip
+
+# Forensic memory dumps (Do not commit large binary memory dumps)
+*.dmp
+*.raw
+Artifacts_*/
+
+# OS / Temporary files
+.DS_Store
+Thumbs.db
+*.log

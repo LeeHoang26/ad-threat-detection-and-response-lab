@@ -1,0 +1,18 @@
+<group name="windows,active_directory_attacks,sysmon,canary_attacks,">
+
+  <!-- ===================================================================== -->
+  <!-- Canary File Tampering & Ransomware Triage Detection (MITRE T1486)      -->
+  <!-- Target Event: Sysmon Event ID 11 (FileCreate)                          -->
+  <!-- Target Filenames: Canary Trap Files (_financial_payroll, etc.)         -->
+  <!-- ===================================================================== -->
+  <rule id="100200" level="12">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^11$</field>
+    <field name="win.eventdata.targetFilename" type="pcre2">(?i)(_financial_payroll_2026|_confidential_contract)</field>
+    <description>SOC CRITICAL: Canary File Tampering Detected! Possible Ransomware Activity on $(win.system.computer) by Process $(win.eventdata.image) (PID: $(win.eventdata.processId))</description>
+    <mitre>
+      <id>T1486</id>
+    </mitre>
+  </rule>
+
+</group>

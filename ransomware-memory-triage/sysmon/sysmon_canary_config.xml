@@ -1,0 +1,34 @@
+<Sysmon schemaversion="4.90">
+
+  <!-- Enable SHA256 hashing for all file and process events -->
+  <HashAlgorithms>SHA256</HashAlgorithms>
+
+  <!-- Protect Sysmon config from unauthorized modification -->
+  <CheckRevocation/>
+
+  <EventFiltering>
+
+    <!-- Include: Any write to canary trap files -->
+    <RuleGroup name="Canary_FileCreate_Include" groupRelation="or">
+      <FileCreate onmatch="include">
+        <TargetFilename condition="contains">!_financial_payroll_2026</TargetFilename>
+        <TargetFilename condition="contains">!_confidential_contract</TargetFilename>
+        <TargetFilename condition="contains">!00_financial_payroll_2026</TargetFilename>
+        <TargetFilename condition="contains">!00_confidential_contract</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+
+    <!-- Exclude: Known-legitimate process writers (AV, indexer, VSS) -->
+    <RuleGroup name="Canary_FileCreate_Exclude" groupRelation="or">
+      <FileCreate onmatch="exclude">
+        <Image condition="is">C:\Program Files\Windows Defender\MsMpEng.exe</Image>
+        <Image condition="is">C:\Program Files\Windows Defender\MpCmdRun.exe</Image>
+        <Image condition="is">C:\Windows\System32\SearchIndexer.exe</Image>
+        <Image condition="is">C:\Windows\System32\SearchProtocolHost.exe</Image>
+        <Image condition="is">C:\Windows\System32\vssvc.exe</Image>
+        <Image condition="is">C:\Windows\System32\svchost.exe</Image>
+      </FileCreate>
+    </RuleGroup>
+
+  </EventFiltering>
+</Sysmon>
