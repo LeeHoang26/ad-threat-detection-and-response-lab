@@ -4,7 +4,7 @@ A multi-scenario Windows security lab covering detection engineering, alert corr
 
 This repository is a portfolio capstone built from three focused lab scenarios. The scenarios intentionally share Wazuh, Sysmon, Windows telemetry, and Active Response so the detection-to-containment workflow can be compared across different attack surfaces.
 
-The companion [Wazuh Detection Quality and Regression Lab](https://github.com/LeeHoang26/soc-detection-quality-and-regression-lab) tests these detection ideas against positive, negative and edge-case telemetry after the response workflows are built.
+The companion [Wazuh Detection Quality and Regression Lab](https://github.com/LeeHoang26/wazuh-detection-quality-lab) tests these detection ideas against positive, negative and edge-case telemetry after the response workflows are built.
 
 ## Scenarios
 

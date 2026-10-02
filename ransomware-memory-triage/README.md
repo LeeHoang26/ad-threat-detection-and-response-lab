@@ -15,7 +15,7 @@ In practical incident response, detecting ransomware only after the ransom note 
 
 This lab explores a **canary-based detection strategy**: placing high-priority decoy files in directories most likely to be indexed first during recursive traversal (e.g., alphabetically sorted names like `!_financial_payroll_2026.txt`). Tampering with a decoy file triggers immediate alerting, process suspension, memory acquisition via ProcDump, and final termination.
 
-The detection rule in this scenario is the baseline examined by the companion [Detection Quality and Regression Lab](https://github.com/LeeHoang26/soc-detection-quality-and-regression-lab). That companion lab documents a Recent-items .lnk false-positive case and a detection-only candidate that keeps Active Response disabled during tuning.
+The detection rule in this scenario is the baseline examined by the companion [Detection Quality and Regression Lab](https://github.com/LeeHoang26/wazuh-detection-quality-lab). That companion lab documents a Recent-items .lnk false-positive case and a detection-only candidate that keeps Active Response disabled during tuning.
 
 ---
 
