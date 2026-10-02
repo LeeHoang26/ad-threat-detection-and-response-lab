@@ -1,4 +1,6 @@
-﻿> This scenario is maintained as part of the [Active Directory Threat Detection & Response Lab](../README.md).`r`n`r`n# Automated Ransomware Canary Defense & In-Memory SOAR Triage
+> This scenario is maintained as part of the [Active Directory Threat Detection & Response Lab](../README.md).
+
+# Automated Ransomware Canary Defense and In-Memory SOAR Triage
 
 A detection engineering and incident response lab exploring proactive ransomware detection using decoy canary files and automated volatile memory collection via Wazuh Active Response.
 
@@ -12,6 +14,8 @@ In practical incident response, detecting ransomware only after the ransom note 
 3. Offline recovery without paying a ransom becomes impossible.
 
 This lab explores a **canary-based detection strategy**: placing high-priority decoy files in directories most likely to be indexed first during recursive traversal (e.g., alphabetically sorted names like `!_financial_payroll_2026.txt`). Tampering with a decoy file triggers immediate alerting, process suspension, memory acquisition via ProcDump, and final termination.
+
+The detection rule in this scenario is the baseline examined by the companion [Detection Quality and Regression Lab](https://github.com/LeeHoang26/soc-detection-quality-and-regression-lab). That companion lab documents a Recent-items .lnk false-positive case and a detection-only candidate that keeps Active Response disabled during tuning.
 
 ---
 
