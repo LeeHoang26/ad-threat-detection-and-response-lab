@@ -166,19 +166,19 @@ Verification of captured forensic artifacts and detailed triage log (`triage_exe
 
 ```text
 canary-ransomware-triage/
-â”œâ”€â”€ assets/                    # Verification screenshots and event logs
-â”œâ”€â”€ simulator/
-â”‚   â””â”€â”€ ransomware_sim.ps1     # Safe directory encryption simulator
-â”œâ”€â”€ sysmon/
-â”‚   â””â”€â”€ sysmon_canary_config.xml # Sysmon Event 11 canary filter rule
-â”œâ”€â”€ triage/
-â”‚   â”œâ”€â”€ canary-triage.cmd      # Wazuh Active Response batch wrapper
-â”‚   â””â”€â”€ triage_soar_handler.ps1 # Suspend -> ProcDump -> Terminate triage handler
-â”œâ”€â”€ wazuh/
-â”‚   â”œâ”€â”€ local_rules.xml        # Wazuh detection rule 100200
-â”‚   â””â”€â”€ ossec.conf.snippet     # Active response configuration snippet
-â”œâ”€â”€ .gitignore                 # Excludes raw .dmp files and memory artifacts
-â””â”€â”€ README.md                  # Project documentation
+|-- assets/                    # Verification screenshots and event logs
+|-- simulator/
+|   `-- ransomware_sim.ps1     # Safe directory encryption simulator
+|-- sysmon/
+|   `-- sysmon_canary_config.xml # Sysmon Event 11 canary filter rule
+|-- triage/
+|   |-- canary-triage.cmd      # Wazuh Active Response batch wrapper
+|   `-- triage_soar_handler.ps1 # Suspend -> ProcDump -> Terminate triage handler
+|-- wazuh/
+|   |-- local_rules.xml        # Wazuh detection rule 100200
+|   `-- ossec.conf.snippet     # Active Response configuration snippet
+|-- .gitignore                 # Excludes raw .dmp files and memory artifacts
+`-- README.md                  # Project documentation
 ```
 
 ---

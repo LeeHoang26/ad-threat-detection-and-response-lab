@@ -1,4 +1,6 @@
-﻿> This scenario is maintained as part of the [Active Directory Threat Detection & Response Lab](../README.md).`r`n`r`n# Active Directory Lateral Movement Detection & Automated Containment Pipeline
+﻿> This scenario is maintained as part of the [Active Directory Threat Detection & Response Lab](../README.md).
+
+# Active Directory Lateral Movement Detection & Automated Containment Pipeline
 
 A detection engineering and SOAR lab demonstrating how to detect, correlate, and contain **Active Directory lateral movement (WMI / WinRM remote shell execution)** using lightweight endpoint telemetry and dynamic host firewall isolation.
 
@@ -187,17 +189,17 @@ Immediately following containment, subsequent network and remote execution attem
 
 ```text
 lateral-movement-host-isolation/
-â”œâ”€â”€ assets/                    # Verification screenshots and event logs
-â”œâ”€â”€ soar/
-â”‚   â”œâ”€â”€ block-lateral.cmd      # Wazuh Active Response bridge
-â”‚   â””â”€â”€ isolate_attacker.ps1   # Firewall isolation & process audit worker
-â”œâ”€â”€ sysmon/
-â”‚   â””â”€â”€ sysmon_lateral_rules.xml # Sysmon Event 1 process creation filter
-â”œâ”€â”€ wazuh/
-â”‚   â”œâ”€â”€ local_rules.xml        # Wazuh detection rule 100300
-â”‚   â””â”€â”€ ossec.conf.snippet     # Active response configuration snippet
-â”œâ”€â”€ .gitignore
-â””â”€â”€ README.md                  # Project documentation
+|-- assets/                    # Verification screenshots and event logs
+|-- soar/
+|   |-- block-lateral.cmd      # Wazuh Active Response bridge
+|   `-- isolate_attacker.ps1   # Firewall isolation and process audit worker
+|-- sysmon/
+|   `-- sysmon_lateral_rules.xml # Sysmon Event 1 process creation filter
+|-- wazuh/
+|   |-- local_rules.xml        # Wazuh detection rule 100300
+|   `-- ossec.conf.snippet     # Active Response configuration snippet
+|-- .gitignore
+`-- README.md                  # Project documentation
 ```
 
 ---

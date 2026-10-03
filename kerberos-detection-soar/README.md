@@ -1,4 +1,6 @@
-﻿> This scenario is maintained as part of the [Active Directory Threat Detection & Response Lab](../README.md).`r`n`r`n# Active Directory Threat Detection & Automated SOAR Containment
+﻿> This scenario is maintained as part of the [Active Directory Threat Detection & Response Lab](../README.md).
+
+# Active Directory Threat Detection & Automated SOAR Containment
 
 A hands-on detection engineering and automated incident response lab focused on Kerberos credential harvesting attacks (**AS-REP Roasting** and **Kerberoasting**) in an Active Directory environment.
 
@@ -97,7 +99,7 @@ Building this pipeline revealed several critical design decisions that different
 
 ### 1. The Anti-DoS Dilemma (Why Disabling Accounts Can Backfire)
 - **The v1 Prototype:** Initially, any alert triggered an immediate LDAP call to disable the account involved (as seen in the earlier lab logs). 
-- **The Operational Flaw:** In Kerberoasting, the roasted identity is a **service account** (e.g., MSSQL, IIS, ERP). If an attacker requests tickets for all SPNs in a domain, automatically disabling those accounts immediately shuts down company databases and web applicationsâ€”effectively weaponizing the SOAR script into a self-inflicted Denial of Service.
+- **The Operational Flaw:** In Kerberoasting, the roasted identity is a **service account** (e.g., MSSQL, IIS, ERP). If an attacker requests tickets for all SPNs in a domain, automatically disabling those accounts immediately shuts down company databases and web applications, effectively weaponizing the SOAR script into a self-inflicted denial of service.
 - **The v2 Architecture:**
   - **Kerberoasting:** Automated account disablement is explicitly suppressed. The script notifies the SOC team with the attacker's IP and target SPN, flagging the source host for network isolation.
   - **AS-REP Roasting:** While tested in lab with automated user disablement for containment validation, in production environments this can also be exploited if an attacker sprays AS-REQs for all pre-auth disabled users. The recommended enterprise action is perimeter IP blocking and forcing pre-auth re-enablement.
@@ -151,10 +153,10 @@ Real-time incident alert dispatched via Telegram bot and identity-level containm
 
 ```text
 ad-kerberos-attack-detection-soar/
-â”œâ”€â”€ assets/                    # Lab screenshots and alert captures
-â”œâ”€â”€ custom-soar.py             # Wazuh SOAR integration script (LDAP + Telegram)
-â”œâ”€â”€ local_rules.xml            # Custom Wazuh correlation rules
-â””â”€â”€ README.md                  # Project documentation & engineering notes
+|-- assets/                    # Lab screenshots and alert captures
+|-- custom-soar.py             # Wazuh SOAR integration script (LDAP + Telegram)
+|-- local_rules.xml            # Custom Wazuh correlation rules
+`-- README.md                  # Project documentation and engineering notes
 ```
 
 ---
