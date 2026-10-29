@@ -10,7 +10,7 @@
     <if_group>windows</if_group>
     <field name="win.system.eventID">^4769$</field>
     <field name="win.eventdata.ticketEncryptionType">^0x17$</field>
-    <description>SOC ALERT: Active Kerberoasting Request Detected (MITRE T1558.003) targeting $(win.eventdata.serviceName) by account $(win.eventdata.targetUserName)</description>
+    <description>RC4 service-ticket request for $(win.eventdata.serviceName) by $(win.eventdata.targetUserName); review for Kerberoasting</description>
     <mitre>
       <id>T1558.003</id>
     </mitre>
@@ -24,7 +24,7 @@
     <field name="win.system.eventID">^4768$</field>
     <field name="win.eventdata.preAuthType">^0$</field>
     <field name="win.eventdata.ticketEncryptionType">^0x17$</field>
-    <description>SOC ALERT: AS-REP Roasting Attack Detected (MITRE T1558.004) targeting account without pre-auth $(win.eventdata.targetUserName)</description>
+    <description>RC4 TGT request without pre-authentication for $(win.eventdata.targetUserName); review for AS-REP Roasting</description>
     <mitre>
       <id>T1558.004</id>
     </mitre>
@@ -37,7 +37,7 @@
     <if_group>windows</if_group>
     <field name="win.system.eventID">^4662$</field>
     <field name="win.eventdata.properties" type="pcre2">(?i)1131f6aa-9c07-11d1-f79f-00c04fc2dcd2</field>
-    <description>SOC CRITICAL: Unauthorized DCSync Domain Replication Detected (MITRE T1003.006) initiated by $(win.eventdata.subjectUserName)</description>
+    <description>Directory replication access by $(win.eventdata.subjectUserName); review identity and replication permissions</description>
     <mitre>
       <id>T1003.006</id>
     </mitre>

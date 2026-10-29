@@ -1,66 +1,73 @@
-﻿# Active Directory Threat Detection & Response Lab
+# Active Directory Threat Detection & Response Lab
 
-A multi-scenario Windows security lab covering detection engineering, alert correlation, and response validation across three common enterprise attack paths.
+I built this lab to follow Windows alerts from the event fields through investigation and a limited response. It contains two Active Directory scenarios and one Windows endpoint scenario.
 
-This repository is a portfolio capstone built from three focused lab scenarios. The scenarios intentionally share Wazuh, Sysmon, Windows telemetry, and Active Response so the detection-to-containment workflow can be compared across different attack surfaces.
+The companion [Wazuh Detection Quality and Regression Lab](https://github.com/LeeHoang26/wazuh-detection-quality-lab) tests the detection logic against positive, negative and edge cases. Its offline metrics are separate from the live examples here.
 
-The companion [Wazuh Detection Quality and Regression Lab](https://github.com/LeeHoang26/wazuh-detection-quality-lab) tests these detection ideas against positive, negative and edge-case telemetry after the response workflows are built.
+## Setup
 
-## Scenarios
+The recorded lab used VMware Workstation and Wazuh 4.8 on an isolated `192.168.50.0/24` network.
 
-| Scenario | Primary question | Main telemetry | Response focus |
-| --- | --- | --- | --- |
-| [Kerberos Detection & SOAR Containment](kerberos-detection-soar/README.md) | Can we detect credential-access activity against Active Directory? | Windows Events 4768, 4769, 4662 | LDAP identity containment, Telegram briefing, anti-DoS policy |
-| [Lateral Movement & Host Isolation](lateral-movement-containment/README.md) | Can we detect and block WMI/WinRM remote execution? | Sysmon Event 1, Security Event 4624 | Source-IP correlation, Windows Defender Firewall isolation |
-| [Ransomware Canary & Memory Triage](ransomware-memory-triage/README.md) | Can we stop a file-encryption process while preserving volatile evidence? | Sysmon Event 11, Wazuh alert JSON | Process suspension, ProcDump memory capture, termination |
+| Host | Role | Address |
+| --- | --- | --- |
+| `DC01` | Windows Server 2022, `hoang.vn`, Security event auditing | `192.168.50.10` |
+| `WK01` | Windows 10, Sysmon and Wazuh Agent | `192.168.50.20` |
+| `SIEM-SRV` | Ubuntu 22.04, Wazuh Manager | `192.168.50.30` |
+| `KALI` | Impacket test client | `192.168.50.40` |
 
-## Architecture
+Scenario READMEs contain the configuration links and setup details. When collecting canary and lateral telemetry on the same endpoint, merge the Sysmon settings into one configuration. Applying either standalone configuration can replace the other scenario's filters.
 
-```text
-Windows / Active Directory telemetry
-        |
-        v
-Sysmon + Windows Security Events
-        |
-        v
-Wazuh Manager and custom detection rules
-        |
-        v
-Active Response / SOAR worker
-        |
-        +--> Identity containment / Telegram briefing
-        +--> Firewall isolation / process audit
-        +--> Memory and network artifact capture
-        |
-        v
-Screenshots, logs, and verification evidence
+## Detection
+
+| Scenario | Telemetry | Rules |
+| --- | --- | --- |
+| [Kerberos](kerberos-detection-soar/README.md) | Security Events 4768, 4769, 4662 | `100100`, `100101`, `100102` |
+| [Lateral movement](lateral-movement-containment/README.md) | Sysmon Event 1 and Security Event 4624 | `100300` |
+| [Canary file and process triage](ransomware-memory-triage/README.md) | Sysmon Events 11 and 1 | `100200` |
+
+A match is a reason to investigate. An RC4 ticket, replication GUID, remote shell or canary write can also occur during legitimate activity.
+
+## Response
+
+The handlers take different actions:
+
+- Kerberos sends a Telegram notice. AS-REP account disablement requires `AD_ALLOW_ACCOUNT_DISABLE=true`, identity exclusions, a checked LDAP write and UAC readback. Kerberoasting never disables the service account; `100102` is detection-only in the integration shown.
+- Lateral movement correlates the alert's exact logon ID with a preceding network logon, then blocks one source IP on the reporting endpoint. The reported PID is audited only.
+- Canary triage logs a review decision by default. `CANARY_ENABLE_RESPONSE=true` enables process actions after Sysmon and live-process identity checks. ProcDump, socket metadata and executable SHA-256 support later analysis.
+
+Both Windows Active Response snippets use `local`, meaning the agent that generated the alert. Missing or conflicting incident identity stops the response; the handlers do not guess from the newest event.
+
+## Evidence
+
+Each scenario retains its recorded screenshots and observations:
+
+- [Kerberos ticket requests, Wazuh alerts and LDAP result](kerberos-detection-soar/README.md#evidence)
+- [WMI execution, source-IP block and subsequent connection failures](lateral-movement-containment/README.md#evidence)
+- [Canary alert, process dumps and triage artifacts](ransomware-memory-triage/README.md#evidence)
+
+These images document the scenarios and observations described in each README.
+
+## Testing
+
+From this repository root:
+
+```powershell
+python -m unittest discover -s kerberos-detection-soar/tests
+powershell -NoProfile -File tests\test_active_response.ps1
 ```
 
-## What This Portfolio Demonstrates
+The tests exercise handler decisions and failure paths with mocks. They do not contact LDAP or Telegram or run real containment. Live verification still needs an isolated Windows/Wazuh environment.
 
-- Detection rules tied to concrete Windows event fields instead of tool-name-only claims.
-- Correlation across telemetry sources when a single event is missing context.
-- Response safeguards against false containment and self-inflicted denial of service.
-- Verification evidence showing whether containment actually worked.
-- Explicit lab limitations and production considerations.
+## Limits
 
-## Scope
+This is a lab/POC. The response is narrower than full incident containment: one account, one source-IP block or one selected process. Other accounts, hosts, processes and completed writes need separate investigation.
 
-This is an isolated VMware proof-of-concept lab. It is intended for learning and portfolio demonstration, not direct production deployment. Credentials, IP addresses, Active Response scope, alert thresholds, and artifact storage require hardening before enterprise use.
+Single-event rules lack a production baseline, frequency thresholds and an approved response policy. LDAP exclusions do not identify every privileged or business-critical account. Dumps require access control, storage limits and review before sharing.
 
-## Repository Layout
-
-```text
-ad-threat-detection-and-response-lab/
-├── kerberos-detection-soar/
-├── lateral-movement-containment/
-├── ransomware-memory-triage/
-├── .gitignore
-└── README.md
-```
+Process dumps do not prove encryption-key recovery. The companion canary live test used an Explorer TXT copy with Active Response disabled; it validated detection coverage rather than ransomware or process-response safety.
 
 ## Author
 
-Le Hoang - Cybersecurity student focused on SOC analysis, detection engineering, and Windows incident response.
+Le Duc Hoang — Cybersecurity student focused on SOC analysis and Windows investigation.
 
-GitHub: https://github.com/LeeHoang26
+[GitHub](https://github.com/LeeHoang26)

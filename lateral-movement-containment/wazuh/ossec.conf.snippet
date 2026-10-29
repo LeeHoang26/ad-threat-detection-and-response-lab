@@ -13,11 +13,10 @@
   </command>
 
   <!-- 2. Active Response trigger bound to Lateral Movement Rule 100300 -->
-  <!-- Lab deployment: <location>all</location> as configured in lab /var/ossec/etc/ossec.conf -->
-  <!-- Enterprise note: In multi-agent environments, scope to <location>local</location> to avoid fleet-wide execution -->
+  <!-- Run only on the agent that generated the alert. -->
   <active-response>
     <command>lateral-firewall-block</command>
-    <location>all</location>
+    <location>local</location>
     <rules_id>100300</rules_id>
   </active-response>
 
