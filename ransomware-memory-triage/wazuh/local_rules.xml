@@ -8,8 +8,8 @@
   <rule id="100200" level="12">
     <if_group>windows</if_group>
     <field name="win.system.eventID">^11$</field>
-    <field name="win.eventdata.targetFilename" type="pcre2">(?i)(_financial_payroll_2026|_confidential_contract)</field>
-    <description>SOC CRITICAL: Canary File Tampering Detected! Possible Ransomware Activity on $(win.system.computer) by Process $(win.eventdata.image) (PID: $(win.eventdata.processId))</description>
+    <field name="win.eventdata.targetFilename" type="pcre2">(?i)(?:^|[\\/])!(?:_financial_payroll_2026|_confidential_contract)\.txt$</field>
+    <description>Protected TXT canary write on $(win.system.computer) by $(win.eventdata.image) (PID: $(win.eventdata.processId))</description>
     <mitre>
       <id>T1486</id>
     </mitre>

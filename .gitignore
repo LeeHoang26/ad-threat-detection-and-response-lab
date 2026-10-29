@@ -11,6 +11,7 @@ Desktop.ini
 *.raw
 *.csv
 Artifacts_*/
+tests/temp-active-response-*/
 bin/
 *.exe
 *.zip

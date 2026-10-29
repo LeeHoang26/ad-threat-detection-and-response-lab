@@ -1,182 +1,92 @@
-﻿> This scenario is maintained as part of the [Active Directory Threat Detection & Response Lab](../README.md).
+# Kerberos Detection and Account Response
 
-# Active Directory Threat Detection & Automated SOAR Containment
+I used Windows Security events to investigate Kerberoasting and AS-REP Roasting signals, then added a Python integration for Telegram notification and an optional LDAP account response.
 
-A hands-on detection engineering and automated incident response lab focused on Kerberos credential harvesting attacks (**AS-REP Roasting** and **Kerberoasting**) in an Active Directory environment.
+[Back to the lab](../README.md)
 
----
+## Setup
 
-## 1. Environment Topology
+The recorded environment used VMware Workstation, Wazuh 4.8 and the `hoang.vn` domain.
 
-The lab was built on VMware Workstation using dedicated virtual machines in an isolated subnet (`192.168.50.0/24`):
+| Host | Role | Address |
+| --- | --- | --- |
+| `DC01` | Windows Server 2022 Domain Controller | `192.168.50.10` |
+| `SIEM-SRV` | Ubuntu 22.04 Wazuh Manager | `192.168.50.30` |
+| `KALI` | Impacket `GetNPUsers.py` and `GetUserSPNs.py` | `192.168.50.40` |
 
-| Host | OS | Role | IP Address | Details |
-| :--- | :--- | :--- | :--- | :--- |
-| **DC01** | Windows Server 2022 | Primary Domain Controller (`hoang.vn`) | `192.168.50.10` | Audit policies enabled for Kerberos subcategories, Wazuh Agent 4.8 |
-| **SIEM-SRV** | Ubuntu 22.04 LTS | SIEM Manager & SOAR Engine | `192.168.50.30` | Wazuh Manager 4.8, custom rules, Python LDAP integration |
-| **KALI** | Kali Linux | Attacker Node | `192.168.50.40` | Impacket suite (`GetNPUsers.py`, `GetUserSPNs.py`) |
+Enable Success/Failure auditing for `Kerberos Authentication Service` and `Kerberos Service Ticket Operations` on the DC. Directory Service Access auditing and the relevant object SACL are needed for Event 4662.
 
-### Targeted Attack Vectors
-- **AS-REP Roasting (`T1558.004`):** Querying TGTs for accounts with Kerberos pre-authentication disabled (`DONT_REQ_PREAUTH`). The DC returns an AS-REP encrypted with the user's password hash, allowing offline cracking without sending further packets to the DC.
-- **Kerberoasting (`T1558.003`):** Any valid domain user requests TGS service tickets for accounts registered with a Service Principal Name (SPN) specifying RC4-HMAC (`0x17`) encryption, extracting hashes for offline brute-forcing.
+Use [local_rules.xml](local_rules.xml) on the Manager. Install [requirements.txt](requirements.txt) into the integration's Python environment and place [custom-soar.py](custom-soar.py) at `/var/ossec/integrations/custom-soar.py` with the appropriate Wazuh ownership and executable permissions.
 
----
+Configure the Wazuh integration to use `custom-soar.py`, JSON alert format and rule IDs `100100,100101`. Rule `100102` is detection-only in this configuration.
 
-## 2. Telemetry & SIEM Detection Engineering
+The integration reads these environment variables:
 
-### Active Directory Audit Policy Baseline
-To capture ticket requests, subcategory auditing was configured on `DC01` via `auditpol`:
-- `Kerberos Authentication Service` -> Success/Failure (Logs **Event ID 4768** - AS-REQ/AS-REP)
-- `Kerberos Service Ticket Operations` -> Success/Failure (Logs **Event ID 4769** - TGS-REQ/TGS-REP)
+| Variable | Use |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Notification destination |
+| `DOMAIN_CONTROLLER_IP` | DC address; use its certificate-matching FQDN for LDAPS |
+| `DOMAIN_ADMIN_USER`, `DOMAIN_ADMIN_PASS`, `AD_BASE_DN` | LDAP bind identity, secret and search base |
+| `AD_USE_LDAPS=true`, `AD_LDAP_CA_FILE` | Enable TLS and supply a trusted CA file when needed |
+| `AD_ALLOW_ACCOUNT_DISABLE=true` | Opt in to AS-REP account disablement; default is notification only |
+| `AD_EXCLUDED_IDENTITIES` | Comma-separated additions to the built-in exclusions |
 
-### Wazuh Correlation Rules (`local_rules.xml`)
-Custom Level 12 and 14 correlation rules on the central manager (`/var/ossec/etc/rules/local_rules.xml`):
+The bind-variable name is retained for compatibility; use a dedicated identity with only the required delegated rights. With LDAPS enabled, certificate verification is required. Without it, the lab connection uses LDAP on port 389. LDAP connect/receive and Telegram HTTP timeouts are five seconds.
 
-```xml
-<group name="windows,active_directory_attacks,">
+## Detection
 
-  <!-- 1. Kerberoasting Attack Detection (MITRE T1558.003) -->
-  <!-- Target Event: Windows Security Event ID 4769 (Kerberos Service Ticket Operation) -->
-  <!-- Forensic Indicator: Ticket Encryption Type 0x17 (RC4-HMAC) for SPN services -->
-  <rule id="100100" level="12">
-    <if_group>windows</if_group>
-    <field name="win.system.eventID">^4769$</field>
-    <field name="win.eventdata.ticketEncryptionType">^0x17$</field>
-    <description>SOC ALERT: Active Kerberoasting Request Detected (MITRE T1558.003) targeting $(win.eventdata.serviceName) by account $(win.eventdata.targetUserName)</description>
-    <mitre>
-      <id>T1558.003</id>
-    </mitre>
-  </rule>
+- `100100`: Event 4769 with RC4-HMAC (`0x17`), a Kerberoasting signal that can also reflect legacy service use.
+- `100101`: Event 4768 with no pre-authentication and RC4. An AS-REP is encrypted with a key derived from the user's password, which permits an offline cracking attempt against a captured response.
+- `100102`: Event 4662 with the replication-right GUID. Legitimate DC replication can match; the alert needs subject-account and authorization review.
 
-  <!-- 2. AS-REP Roasting Attack Detection (MITRE T1558.004) -->
-  <!-- Target Event: Windows Security Event ID 4768 (Kerberos Authentication Service / TGT) -->
-  <!-- Forensic Indicator: Pre-Authentication Type 0 (Disabled Pre-Auth), Encryption 0x17 -->
-  <rule id="100101" level="12">
-    <if_group>windows</if_group>
-    <field name="win.system.eventID">^4768$</field>
-    <field name="win.eventdata.preAuthType">^0$</field>
-    <field name="win.eventdata.ticketEncryptionType">^0x17$</field>
-    <description>SOC ALERT: AS-REP Roasting Attack Detected (MITRE T1558.004) targeting account without pre-auth $(win.eventdata.targetUserName)</description>
-    <mitre>
-      <id>T1558.004</id>
-    </mitre>
-  </rule>
+These single-event conditions do not establish an attack by themselves. The [companion quality lab](https://github.com/LeeHoang26/wazuh-detection-quality-lab) examines false positives and missing context.
 
-  <!-- 3. DCSync Credential Extraction Detection (MITRE T1003.006) -->
-  <!-- Target Event: Windows Security Event ID 4662 (Directory Service Access) -->
-  <!-- Forensic Indicator: Replicating Directory Changes GUID: 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 -->
-  <rule id="100102" level="14">
-    <if_group>windows</if_group>
-    <field name="win.system.eventID">^4662$</field>
-    <field name="win.eventdata.properties" type="pcre2">(?i)1131f6aa-9c07-11d1-f79f-00c04fc2dcd2</field>
-    <description>SOC CRITICAL: Unauthorized DCSync Domain Replication Detected (MITRE T1003.006) initiated by $(win.eventdata.subjectUserName)</description>
-    <mitre>
-      <id>T1003.006</id>
-    </mitre>
-  </rule>
+## Response
 
-</group>
+Kerberoasting produces a notification without disabling the service account. Automatically disabling every roasted service identity could interrupt services.
+
+AS-REP disablement requires the explicit opt-in. The script normalizes UPN and `DOMAIN\user` names, escapes LDAP search values and refuses ambiguous results. Built-in exclusions, the bind identity, machine accounts and `adminCount=1` accounts are protected; configured exclusions are merged with those defaults.
+
+The LDAP write sets only `ACCOUNTDISABLE` with `current_uac | 0x0002`. The script checks the operation result and reads UAC back before reporting success. Lookup, write, readback and delivery failures are explicit. Missing source IPs remain unknown.
+
+## Evidence
+
+The recorded Impacket run requested ticket material from DC01:
+
+![Attack emulation](assets/01_kali_attack_emulation.png)
+
+Events 4768 and 4769 were generated in the DC's Security log:
+
+![Domain Controller events](assets/02_dc01_kerberos_events.png)
+
+Wazuh matched both credential-access rules:
+
+| Kerberoasting `100100` | AS-REP `100101` |
+| --- | --- |
+| ![Kerberoasting alert](assets/03_wazuh_kerberoasting_100100.png) | ![AS-REP alert](assets/03_wazuh_asrep_roasting_100101.png) |
+
+The recorded response disabled `backupadmin`, changing UAC from `4260352` to `4260354`, while `john` and target SPN `sqlservice` remained active:
+
+| Disabled account | Account retained |
+| --- | --- |
+| ![BackupAdmin disabled](assets/05b_ad_account_disabled_containment.png) | ![John retained](assets/05a_ad_account_disabled_containment.png) |
+
+![Telegram notice](assets/04a_soar_telegram_incident_alert.png)
+
+These images show the ticket requests, alerts and account-state observations used for this scenario.
+
+## Testing
+
+From the repository root:
+
+```powershell
+python -m unittest discover -s kerberos-detection-soar/tests
 ```
 
-### Wazuh Integrator Configuration (`/var/ossec/etc/ossec.conf`)
-The central SIEM executes the SOAR script automatically when either Rule 100100 or 100101 fires:
+The tests use mocked LDAP and HTTP results. To verify deployment, confirm Windows audit events, Manager rule matches, integration failures and UAC readback in an isolated domain. Sync the test client's clock with the DC before Impacket requests to avoid `KRB_AP_ERR_SKEW`.
 
-```xml
-<integration>
-  <name>custom-soar.py</name>
-  <rule_id>100100, 100101</rule_id>
-  <alert_format>json</alert_format>
-</integration>
-```
+## Limits
 
----
+The exclusions do not cover every privileged group, service dependency or business-critical identity. Account changes still need an approved IAM policy and delegated permissions. A notification does not apply perimeter blocking or re-enable pre-authentication.
 
-## 3. SOAR Architecture & Engineering Evolution (v1 vs v2)
-
-When an alert triggers, Wazuh executes `/var/ossec/integrations/custom-soar.py` to notify the SOC via Telegram and execute LDAP containment actions.
-
-Building this pipeline revealed several critical design decisions that differentiate a naive script from a safe implementation:
-
-### 1. The Anti-DoS Dilemma (Why Disabling Accounts Can Backfire)
-- **The v1 Prototype:** Initially, any alert triggered an immediate LDAP call to disable the account involved (as seen in the earlier lab logs). 
-- **The Operational Flaw:** In Kerberoasting, the roasted identity is a **service account** (e.g., MSSQL, IIS, ERP). If an attacker requests tickets for all SPNs in a domain, automatically disabling those accounts immediately shuts down company databases and web applications, effectively weaponizing the SOAR script into a self-inflicted denial of service.
-- **The v2 Architecture:**
-  - **Kerberoasting:** Automated account disablement is explicitly suppressed. The script notifies the SOC team with the attacker's IP and target SPN, flagging the source host for network isolation.
-  - **AS-REP Roasting:** While tested in lab with automated user disablement for containment validation, in production environments this can also be exploited if an attacker sprays AS-REQs for all pre-auth disabled users. The recommended enterprise action is perimeter IP blocking and forcing pre-auth re-enablement.
-
-### 2. Bitwise `userAccountControl` vs Hardcoded Flags
-- Active Directory stores account flags as a 32-bit bitmask (e.g., `NORMAL_ACCOUNT = 512`, `DONT_EXPIRE_PASSWORD = 65536`).
-- Overwriting UAC with a static integer like `514` (`512 + 2`) strips pre-existing administrative flags.
-- The Python script was refactored to read current UAC and perform a bitwise OR operation: `new_uac = current_uac | 0x0002` (`ACCOUNTDISABLE`), preserving all other settings.
-
-### 3. Identity Normalization (UPN vs sAMAccountName)
-- Windows Event 4769 logs the requesting user in User Principal Name format (`john@HOANG.VN`).
-- Querying LDAP with `(sAMAccountName=john@HOANG.VN)` returns 0 results because AD stores `sAMAccountName` without the domain suffix.
-- The integration script normalizes raw usernames (stripping `DOMAIN\` prefixes and `@domain` suffixes) before executing directory searches.
-
----
-
-## 4. Lab Evidence & Walkthrough
-
-### Phase 1: Attack Emulation (Kali Linux)
-Harvested Kerberos ticket hashes against DC01 (`192.168.50.10`) using Impacket:
-![Red Team Attack Execution](assets/01_kali_attack_emulation.png)
-
-### Phase 2: Domain Controller Telemetry
-Verified Event ID 4768 and 4769 generated in the Windows Security event log:
-![DC01 Event Viewer Security Logs](assets/02_dc01_kerberos_events.png)
-
-### Phase 3: Wazuh Ingestion & Alerting
-Wazuh correlated the events and triggered custom Level 12 alerts:
-
-| Kerberoasting Detection (Rule 100100) | AS-REP Roasting Detection (Rule 100101) |
-| :---: | :---: |
-| ![Wazuh Kerberoasting](assets/03_wazuh_kerberoasting_100100.png) | ![Wazuh AS-REP Roasting](assets/03_wazuh_asrep_roasting_100101.png) |
-
-### Phase 4: SOAR Telegram Briefing & Active Directory Containment
-Real-time incident alert dispatched via Telegram bot and identity-level containment verified in `dsa.msc`:
-
-| Automated AD Account Disablement (`backupadmin`) | Anti-DoS Protection Verification (`john`) |
-| :---: | :---: |
-| ![AD Disabled BackupAdmin](assets/05b_ad_account_disabled_containment.png) | ![Anti-DoS Preserved John](assets/05a_ad_account_disabled_containment.png) |
-
-| Real-Time Telegram SOC Briefing (Both Vectors) |
-| :---: |
-| ![Telegram Incident Briefing](assets/04a_soar_telegram_incident_alert.png) |
-
-- **AS-REP Roasting Result:** `backupadmin` disabled dynamically via bitwise UAC (`4260352 -> 4260354`), preserving pre-existing flags while neutralizing the identity.
-- **Kerberoasting Result:** Identity `john` and target SPN `sqlservice` remain active (anti-DoS safeguard verified), while the incident briefing flags Kali IP `192.168.50.40` for perimeter isolation.
-
----
-
-## 5. Repository Structure
-
-```text
-ad-kerberos-attack-detection-soar/
-|-- assets/                    # Lab screenshots and alert captures
-|-- custom-soar.py             # Wazuh SOAR integration script (LDAP + Telegram)
-|-- local_rules.xml            # Custom Wazuh correlation rules
-`-- README.md                  # Project documentation and engineering notes
-```
-
----
-
-## 6. Practical Notes & Troubleshooting
-
-- **Kerberos Clock Skew (`KRB_AP_ERR_SKEW`):** Kali attack scripts initially failed with clock skew errors because the hypervisor host time drifted from the Domain Controller. Resolved by syncing Kali's clock against DC01 NTP before running Impacket.
-- **Rule Hierarchy in Wazuh:** Windows Kerberos audit events inherit from parent group `windows`. Custom rules must declare `<if_group>windows</if_group>` to ensure consistent correlation.
-- **LDAP Timeouts:** Used standard `urllib.request` with strict socket timeouts inside the Telegram dispatch function to avoid worker thread blocking inside Wazuh's integration pipeline.
-
----
-
-## 7. Lab Scope, Security Hygiene & Known Limitations
-
-> [!NOTE]
-> **Proof-of-Concept (POC) Disclaimer:** This project was developed as a hands-on detection engineering research lab within an isolated VMware virtual testbed. The containment mechanisms and rules demonstrate detection mechanics and automated response workflows.
-
-### Operational Trade-offs & Production Considerations:
-1. **Credential Management:** In this lab environment, credentials are passed via environment variables (`os.getenv`). In enterprise production deployments, credentials must be stored in an enterprise secret manager (e.g., HashiCorp Vault, CyberArk) and authenticated using a dedicated low-privileged service account with delegated OU-level rights rather than Domain Admin.
-2. **LDAP vs LDAPS:** The integration script supports secure LDAPS (Port 636, `AD_USE_LDAPS=true`) to prevent cleartext credential sniffing across network segments.
-3. **Threshold vs Single-Event Alerting:** Rule 100100 matches single Kerberos RC4 requests (`0x17`) to validate lab triggers. In high-volume production Active Directory domains, detection rules should incorporate frequency thresholds (e.g., more than 5 SPN requests within 10 seconds from a single user) to filter out legacy RC4 applications and focus on bulk roasting tools.
-4. **AS-REP Roasting Containment:** Disabling user accounts via automation in lab proves containment capability. In enterprise production, isolating the attacker IP at the perimeter and alerting the IAM team to enforce Kerberos pre-authentication is the preferred non-disruptive response.
-
+The rules need frequency and environmental context before operational use. Event 4662 replication access is particularly unsuitable for automatic account disablement without checking whether replication is authorized.

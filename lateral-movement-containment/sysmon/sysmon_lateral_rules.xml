@@ -1,5 +1,5 @@
 <Sysmon schemaversion="4.90">
-  <!-- Protect Sysmon configuration from unauthorized tampering -->
+  <!-- Check signatures for revoked certificates. -->
   <CheckRevocation/>
 
   <EventFiltering>

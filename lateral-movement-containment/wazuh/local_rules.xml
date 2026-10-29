@@ -7,9 +7,9 @@
   <rule id="100300" level="12">
     <if_group>windows</if_group>
     <field name="win.system.eventID">^1$</field>
-    <field name="win.eventdata.parentImage" type="pcre2">(?i)wmiprvse\.exe|wsmprovhost\.exe</field>
-    <field name="win.eventdata.image" type="pcre2">(?i)(cmd|powershell|powershell_ise)\.exe</field>
-    <description>SOC CRITICAL: Lateral Movement Detected! Suspicious Remote Shell $(win.eventdata.image) spawned by Parent $(win.eventdata.parentImage) on $(win.system.computer)</description>
+    <field name="win.eventdata.parentImage" type="pcre2">(?i)(?:^|[\\/])(?:wmiprvse|wsmprovhost)\.exe$</field>
+    <field name="win.eventdata.image" type="pcre2">(?i)(?:^|[\\/])(?:cmd|powershell|powershell_ise)\.exe$</field>
+    <description>Remote-shell process lineage on $(win.system.computer): $(win.eventdata.parentImage) spawned $(win.eventdata.image)</description>
     <mitre>
       <id>T1047</id>
       <id>T1021.006</id>

@@ -1,172 +1,60 @@
-﻿> This scenario is maintained as part of the [Active Directory Threat Detection & Response Lab](../README.md).
+# Lateral Movement Detection and Source-IP Blocking
 
-# Active Directory Lateral Movement Detection & Automated Containment Pipeline
+I used a WMI remote command to test process-lineage detection, then correlated its logon ID with Security Event 4624 to find the source IP for an inbound firewall block.
 
-A detection engineering and SOAR lab demonstrating how to detect, correlate, and contain **Active Directory lateral movement (WMI / WinRM remote shell execution)** using lightweight endpoint telemetry and dynamic host firewall isolation.
+[Back to the lab](../README.md)
 
----
+## Setup
 
-## 1. Problem Statement & Threat Model
+| Host | Role | Address |
+| --- | --- | --- |
+| `WK01.hoang.vn` | Windows 10, Sysmon, Wazuh Agent 4.8 | `192.168.50.20` |
+| `SIEM-SRV` | Ubuntu 22.04, Wazuh Manager 4.8 | `192.168.50.30` |
+| `KALI` | Impacket WMI client | `192.168.50.40` |
 
-In Active Directory environments, lateral movement is how an attacker pivots from an initial compromised workstation to high-value assets (Domain Controllers, file servers). Attackers often avoid dropping compiled binaries to evade traditional signature-based Antivirus, instead leveraging built-in **Living-off-the-Land Binaries (LOLBins)**:
-- **WMI (`WmiPrvSE.exe`)** via RPC/DCOM (Port 135, dynamic RPC ports) and SMB (Port 445).
-- **WinRM (`wsmprovhost.exe`)** via WS-Management (Port 5985/5986).
+Use the [Sysmon configuration](sysmon/sysmon_lateral_rules.xml), [Wazuh rule](wazuh/local_rules.xml) and [Active Response snippet](wazuh/ossec.conf.snippet). Security network-logon auditing must be enabled on the endpoint, and the Wazuh Agent must collect both Security and Sysmon EventChannel logs.
 
-### Why Traditional AV Fails
-Both `WmiPrvSE.exe` and `cmd.exe` are legitimate, digitally signed Microsoft binaries running under system service contexts (`NT AUTHORITY\NETWORK SERVICE`). File hashing and static signatures show 0 detections.
+The response requires administrative access to the endpoint's Security log and NetSecurity firewall cmdlets. Place [block-lateral.cmd](soar/block-lateral.cmd) in the agent's Active Response `bin` directory and install [isolate_attacker.ps1](soar/isolate_attacker.ps1) at the path referenced by that wrapper.
 
-### The Defensive Approach: Process Lineage Correlation
-Rather than blocking WMI (which breaks SCCM, monitoring, and administration), we detect the anomalous **Parent-Child process relationship**:
-- **Legitimate:** Interactive shells (`cmd.exe`, `powershell.exe`) are spawned by `explorer.exe` (user interactive logon).
-- **Malicious:** An interactive shell spawned directly by `WmiPrvSE.exe` or `wsmprovhost.exe` indicates remote execution without a desktop session.
+If this endpoint also runs the canary scenario, merge both Sysmon configurations. Applying a standalone configuration can replace existing filters; retain the process-create coverage required by canary identity checks.
 
----
+## Detection
 
-## 2. Lab Topology & Environment
+Rule `100300` matches Sysmon Event 1 when `WmiPrvSE.exe` or `wsmprovhost.exe` starts a command shell or PowerShell. The rule uses executable-name boundaries so names such as `notcmd.exe` do not match.
 
-| Node | OS | Hostname / Domain | IP Address | Role |
-| :--- | :--- | :--- | :--- | :--- |
-| **Target Endpoint** | Windows 10 Pro 22H2 | `WK01.hoang.vn` | `192.168.50.20` | Monitored host, Sysmon v15, Wazuh Agent 4.8, Containment Worker |
-| **SIEM Server** | Ubuntu 22.04 LTS | `lehoang` | `192.168.50.30` | Wazuh Manager 4.8, Rule Correlation Engine, Active Response Controller |
-| **Attacker Host** | Kali Linux 2024.1 | `HL3G` | `192.168.50.40` | Attacker node, Impacket (`wmiexec`), lateral execution |
+This lineage can identify remote execution, including legitimate administration. Signed names and hashes alone do not establish intent. Review the command line, account, logon ID and source context.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Attacker as Kali (192.168.50.40)
-    participant Target as Target Endpoint (WK01 192.168.50.20)
-    participant Sysmon as Sysmon (Event ID 1)
-    participant Wazuh as Wazuh Manager (192.168.50.30)
-    participant SOAR as Active Response Worker
-    participant Firewall as Windows Defender Firewall
+## Response
 
-    Attacker->>Target: impacket-wmiexec hoang.vn/Administrator@192.168.50.20 "whoami"
-    Target->>Target: WmiPrvSE.exe spawns cmd.exe /Q /c whoami
-    Target->>Sysmon: Logs Event ID 1 (Parent: WmiPrvSE.exe -> Child: cmd.exe)
-    Sysmon->>Wazuh: Streams EventChannel telemetry
-    Wazuh->>Wazuh: Evaluates Rule 100300 (Level 12)
-    Wazuh-->>Target: Dispatches Active Response command
-    Target->>SOAR: Executes isolate_attacker.ps1
-    SOAR->>SOAR: Correlates remote IP from Security Event 4624 (LogonType 3) with whitelist checks
-    SOAR->>Firewall: Injects Inbound Block: SOC_AUTO_BLOCK_192.168.50.40
-    SOAR->>Target: Audits active child processes under WmiPrvSE
-    SOAR->>Target: Appends audit log to C:\SOC_Lateral_Defense\lateral_containment.log
-    Attacker->>Target: Subsequent commands & ICMP fail (Timeout / 100% Packet Loss)
-```
+The wrapper passes Wazuh JSON through STDIN. The handler requires Rule `100300`, Event 1, logon ID and event time. It looks for a Security Event 4624 network logon with the exact logon ID within the 60 seconds before that event and records the reported PID for audit.
 
----
+Missing, ambiguous or conflicting correlation stops the response. There is no fallback to the newest network logon. Exclusions protect loopback, gateway and configured infrastructure addresses.
 
-## 3. Engineering Decisions & Telemetry Gaps
+The handler applies and verifies an inbound block for one source IP using NetSecurity cmdlets. It audits the reported PID only; it does not kill other children of a WMI provider. Failures are logged rather than reported as successful containment.
 
-Building this containment pipeline highlighted several practical engineering hurdles:
+The [Manager snippet](wazuh/ossec.conf.snippet) uses `local`, meaning the endpoint that generated the alert. `all` broadcasts to every agent, `server` targets the Manager, and `defined-agent` requires an explicit agent ID.
 
-### Challenge 1: The Sysmon Event ID 1 Telemetry Gap (Missing Source IP)
-- **The Issue:** Sysmon Event ID 1 (Process Create) captures detailed process execution metadata (`CommandLine`, `ParentImage`, `LogonId`), but it **does not contain the network remote IP address** because process creation occurs within the local kernel namespace after authentication.
-- **The Solution:** When WMI lateral movement occurs, Windows logs two events:
-  1. `Microsoft-Windows-Sysmon/Operational` -> Event ID 1 (Parent-child execution).
-  2. `Security` -> Event ID 4624 with `LogonType: 3` (Network Logon), which explicitly contains `IpAddress`.
-- **Implementation in `isolate_attacker.ps1`:** The containment script queries recent Security Event 4624 records generated within the last 60 seconds with `LogonType == 3`. To prevent self-inflicted DoS, a critical infrastructure whitelist protects Domain Controllers (`192.168.50.10`) and default gateways from being blocked if a network logon coincides with the alert.
+## Evidence
 
-### Challenge 2: The Short-Lived Process Race Condition (`cmd.exe /c`)
-- **The Issue:** Execution via `impacket-wmiexec` runs transient commands with the `/c` switch (e.g., `cmd.exe /Q /c whoami`). These processes execute and terminate in 20-50 milliseconds.
-- **The Reality:** By the time Wazuh processes the alert and invokes PowerShell via Active Response (1-2 seconds roundtrip), the transient `cmd.exe` process has already exited.
-- **The Engineering Decision:** Attempting to kill the process is secondary; **network-level containment (Firewall block) is the primary defensive anchor**. The script audits child processes under `WmiPrvSE.exe` to terminate any persistent interactive shells or beacon payloads, but relies on immediate inbound host isolation to cut the attacker's pivot path.
+The recorded setup applied Sysmon and configured Active Response:
 
-### Challenge 3: Evolution of the Containment Worker (v1 Static vs v2 Dynamic Correlation)
-- **v1 Prototype:** The initial test script used a static target IP to validate whether Windows Defender Firewall rules could reliably drop live WMI sessions in the lab.
-- **v2 Production Engineering:** Upgraded `isolate_attacker.ps1` to dynamically query Security Event 4624 (`LogonType: 3`), correlate with the execution timestamp, enforce a critical infrastructure whitelist (`DC01` `192.168.50.10`, Gateway, loopback) to prevent self-inflicted DoS, and gracefully audit transient child processes under `WmiPrvSE.exe`.
+![Sysmon configuration](assets/00_sysmon_config_applied.png)
 
----
+![Active Response configuration](assets/00_wazuh_ossec_active_response_config.png)
 
-## 4. Detection Engineering Configuration
+The initial WMI command succeeded and returned `hoang\administrator`:
 
-### A. Sysmon Schema (`sysmon/sysmon_lateral_rules.xml`)
-Targets the specific parent-child relationships characteristic of WMI and WinRM remote shells:
+![Initial WMI execution](assets/01_initial_wmi_execution.png)
 
-```xml
-<Sysmon schemaversion="4.90">
-  <CheckRevocation/>
-  <EventFiltering>
-    <RuleGroup name="Lateral_Movement_Detection" groupRelation="or">
-      <ProcessCreate onmatch="include">
-        <!-- 1. WMI Remote Execution (MITRE T1047) -->
-        <ParentImage condition="image">WmiPrvSE.exe</ParentImage>
-        <!-- 2. WinRM Remoting (MITRE T1021.006) -->
-        <ParentImage condition="image">wsmprovhost.exe</ParentImage>
-      </ProcessCreate>
-    </RuleGroup>
-  </EventFiltering>
-</Sysmon>
-```
+Wazuh recorded `WmiPrvSE.exe -> cmd.exe` and matched rule `100300`:
 
-![Sysmon Config Applied](assets/00_sysmon_config_applied.png)
+![Rule 100300 alert](assets/04_wazuh_rule_100300_detection.png)
 
-### B. Wazuh SIEM Correlation Rule (`wazuh/local_rules.xml`)
-Correlates incoming Sysmon Event 1 logs on the Wazuh Manager under **Rule 100300 (Level 12)**:
+![Alert details](assets/05_wazuh_alert_mitre_details.png)
 
-```xml
-<group name="windows,lateral_movement,sysmon,">
-  <rule id="100300" level="12">
-    <if_group>windows</if_group>
-    <field name="win.system.eventID">^1$</field>
-    <field name="win.eventdata.parentImage" type="pcre2">(?i)wmiprvse\.exe|wsmprovhost\.exe</field>
-    <field name="win.eventdata.image" type="pcre2">(?i)(cmd|powershell|powershell_ise)\.exe</field>
-    <description>SOC CRITICAL: Lateral Movement Detected! Suspicious Remote Shell $(win.eventdata.image) spawned by Parent $(win.eventdata.parentImage) on $(win.system.computer)</description>
-    <mitre>
-      <id>T1047</id>
-      <id>T1021.006</id>
-    </mitre>
-  </rule>
-</group>
-```
+The recorded handler extracted `192.168.50.40` and applied the inbound block:
 
-### C. Active Response Configuration (`wazuh/ossec.conf.snippet`)
-Binds Rule 100300 to the containment command on the target Windows agent:
-
-```xml
-<ossec_config>
-  <command>
-    <name>lateral-firewall-block</name>
-    <executable>block-lateral.cmd</executable>
-    <timeout_allowed>no</timeout_allowed>
-  </command>
-
-  <active-response>
-    <command>lateral-firewall-block</command>
-    <location>all</location>
-    <rules_id>100300</rules_id>
-  </active-response>
-</ossec_config>
-```
-
-![Wazuh Active Response Config](assets/00_wazuh_ossec_active_response_config.png)
-
-*(Scoping note: In this dedicated single-workstation lab testbed, `<location>all</location>` was configured in `/var/ossec/etc/ossec.conf` as shown above. In enterprise multi-host environments, `<location>local</location>` is standard to isolate containment to the reporting agent).*
-
----
-
-## 5. Lab Evidence & Verification
-
-### Step 1: Initial WMI Execution from Kali
-The adversary executes a remote command via WMI. The initial command succeeds and returns `hoang\administrator`:
-
-![Initial WMI Execution](assets/01_initial_wmi_execution.png)
-
-### Step 2: SIEM Detection in Wazuh
-Wazuh correlates Sysmon Event 1 telemetry and fires Rule 100300 (Level 12) with full process context:
-- **Parent Process:** `C:\Windows\System32\wbem\WmiPrvSE.exe`
-- **Spawned Image:** `C:\Windows\System32\cmd.exe`
-- **Command Line:** `cmd.exe /Q /c whoami 1> \\127.0.0.1\ADMIN$\__1790070555.1529102 2>&1`
-- **MITRE ATT&CK:** T1047, T1021.006
-
-![Wazuh Rule 100300 Detection](assets/04_wazuh_rule_100300_detection.png)
-
-![Wazuh Alert MITRE Details](assets/05_wazuh_alert_mitre_details.png)
-
-### Step 3: Containment Execution & Audit Trail
-Active Response triggers `isolate_attacker.ps1`, which dynamically correlates Security Event 4624 (`LogonType 3`, `LogonId: 0x2b7165`) to extract the adversary IP (`192.168.50.40`), deploys the Windows Defender Firewall inbound block rule, audits child processes under `WmiPrvSE.exe`, and logs the full containment trail:
-
-![SOAR Containment Log](assets/02_soar_containment_log.png)
+![Response log](assets/02_soar_containment_log.png)
 
 ```text
 [20260923_093702] [TRIGGER] Lateral movement alert received. Initiating containment workflow...
@@ -176,63 +64,24 @@ Active Response triggers `isolate_attacker.ps1`, which dynamically correlates Se
 [20260923_093702] [CONTAINMENT_COMPLETE] Host isolation active for 192.168.50.40. Threat neutralized.
 ```
 
-### Step 4: Verification of Containment
-Immediately following containment, subsequent network and remote execution attempts from the adversary host (`192.168.50.40`) are dropped by Windows Defender Firewall:
-- **ICMP Ping:** `2 packets transmitted, 0 received, 100% packet loss, time 1020ms`.
-- **WMI Remote Execution:** `Impacket v0.13.0.dev0` fails with `[-] [Errno Connection error (192.168.50.20:445)] timed out`.
+The log calls a source-IP block “Threat neutralized.” The subsequent ping loss and WMI timeout demonstrate blocking from that IP, not complete threat eradication:
 
-![Attacker Isolated Proof](assets/03_attacker_isolated_proof.png)
+![Subsequent connection failures](assets/03_attacker_isolated_proof.png)
 
----
+These screenshots show the recorded WMI execution, source-IP block and connection checks.
 
-## 6. Repository Structure
+## Testing
 
-```text
-lateral-movement-host-isolation/
-|-- assets/                    # Verification screenshots and event logs
-|-- soar/
-|   |-- block-lateral.cmd      # Wazuh Active Response bridge
-|   `-- isolate_attacker.ps1   # Firewall isolation and process audit worker
-|-- sysmon/
-|   `-- sysmon_lateral_rules.xml # Sysmon Event 1 process creation filter
-|-- wazuh/
-|   |-- local_rules.xml        # Wazuh detection rule 100300
-|   `-- ossec.conf.snippet     # Active Response configuration snippet
-|-- .gitignore
-`-- README.md                  # Project documentation
+From the repository root:
+
+```powershell
+powershell -NoProfile -File tests\test_active_response.ps1
 ```
 
----
+The assertions use mocked event and firewall results. Live testing must separately verify exact logon correlation, the resulting firewall rule and later connections from the test IP. The recorded transient `cmd.exe` had already exited when inspected; its absence alone is not containment evidence.
 
-## 7. MITRE ATT&CK & D3FEND Mapping
+## Limits
 
-| Framework | ID | Technique / Defend Action | Implementation in Pipeline |
-| :--- | :--- | :--- | :--- |
-| **ATT&CK** | **T1047** | Windows Management Instrumentation | Monitored via `WmiPrvSE.exe` parent lineage |
-| **ATT&CK** | **T1021.006** | Remote Services: Windows Remote Management | Monitored via `wsmprovhost.exe` parent lineage |
-| **ATT&CK** | **T1059.003** | Command and Scripting Interpreter: Windows Command Shell | Detected when spawned under administrative LOLBin |
-| **D3FEND** | **D3-PSA** | Process Spawn Analysis | Correlating parent-child process creation in Sysmon Event 1 |
-| **D3FEND** | **D3-IBC** | Inbound Traffic Filtering | Enforcing host firewall isolation rule on target endpoint |
-| **D3FEND** | **D3-PT** | Process Termination | Auditing and terminating active attacker shells under WMI |
+The 60-second window can miss older sessions. Exact logon-ID matching reduces ambiguity but does not establish that every remote command is malicious. Concurrent administration and alternate authentication paths need separate testing.
 
----
-
-## 8. Practical SOC Takeaways
-
-1. **Process Lineage Over File Hashes:** LOLBin attacks execute legitimate, digitally signed OS binaries (`WmiPrvSE.exe`, `cmd.exe`). Traditional signature AV fails completely. Detection must anchor on anomalous parent-child lineage.
-2. **Bridging the Telemetry Gap:** Sysmon Event 1 provides deep process execution context but lacks remote network IP. Correlating with Security Event 4624 (LogonType 3) bridges this gap dynamically without hardcoding attacker IP addresses.
-3. **Network Containment Outweighs Process Termination:** Transient LOLBin executions (`cmd.exe /c`) finish in milliseconds before SOAR scripts can run. While process auditing remains necessary for persistent shells, dynamic firewall isolation provides the definitive containment that stops lateral pivoting.
-
----
-
-## 9. Lab Scope, Production Considerations & Known Limitations
-
-> [!NOTE]
-> **Proof-of-Concept (POC) Disclaimer:** This pipeline demonstrates dynamic host firewall isolation and process correlation in an isolated VMware virtual environment.
-
-### Operational Caveats & Enterprise Refinements:
-1. **Event 4624 Correlation Precision:** In this POC, the containment worker correlates the most recent Network Logon (`LogonType 3`) within a 60-second window while filtering against a critical infrastructure whitelist (Domain Controllers, default gateways, loopback). In high-density production environments with concurrent administrative logons, precise correlation should bind the exact `TargetLogonId` passed directly from SIEM event payload metadata rather than scanning the recent event log.
-2. **Fail-Safe Containment Logic:** If dynamic IP resolution fails, the script safely aborts (`exit 1`) with an audit log entry rather than applying unverified block rules.
-3. **Active Response Scoping:** In enterprise multi-agent deployments, Active Response commands should be scoped to `<location>local</location>` (or specific agent groups) rather than broadcasting to all endpoints.
-
-
+An inbound rule for one IP is not full host isolation. Other source addresses, established access paths and affected hosts remain separate investigation targets. Block lifetime and removal need an operational policy.
